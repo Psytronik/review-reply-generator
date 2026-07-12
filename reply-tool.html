@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wildfarm — Reply Generator</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+         max-width: 760px; margin: 0 auto; padding: 20px; background: #fafafa; color: #222; }
+  h1 { color: #0a2540; font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #666; font-size: 14px; margin-bottom: 18px; }
+  label { font-size: 13px; font-weight: bold; color: #888; display: block; margin: 14px 0 6px; }
+  textarea { width: 100%; border: 2px solid #ccc; border-radius: 8px; padding: 12px;
+             font-family: Consolas, Menlo, monospace; font-size: 14px; line-height: 1.5;
+             resize: vertical; color: #333; }
+  textarea:focus { outline: none; border-color: #0a7cff; }
+  #inbox { height: 130px; }
+  #outbox { height: 200px; border-color: #0a7cff; background: #f4f7fb; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  button, .btn { border: none; border-radius: 6px; padding: 11px 18px; font-size: 14px;
+                 font-weight: bold; cursor: pointer; text-decoration: none; display: inline-block; }
+  .gen { background: #0a7cff; color: #fff; }
+  .gen:hover { background: #0866d6; }
+  .copy { background: #0a7cff; color: #fff; }
+  .go { background: #1aab54; color: #fff; }
+  .hint { color: #999; font-size: 12px; margin-top: 6px; }
+  .card { background: #fff; border: 1px solid #e2e2e2; border-radius: 10px; padding: 16px;
+          margin-top: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+</style>
+</head>
+<body>
+  <h1>🦁 Wildfarm — Reply Generator</h1>
+  <div class="sub">Paste the guest's review or message below, then press <b>Enter</b> (or Generate). The tool reads the actual points raised and writes a reply that answers each one. Edit, copy, post.</div>
+
+  <label for="inbox">📥 PASTE THE REVIEW / MESSAGE HERE:</label>
+  <textarea id="inbox" placeholder="Paste the guest's review or question here…"></textarea>
+  <div class="hint">Tip: press Enter (no shift) to generate.</div>
+
+  <div class="row">
+    <button class="gen" onclick="generate()">✨ Generate reply</button>
+    <button class="gen" onclick="document.getElementById('inbox').value='';document.getElementById('outbox').value='';document.getElementById('resultCard').style.display='none';" style="background:#888">🧹 Clear</button>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none">
+    <label for="outbox">✏️ YOUR REPLY (edit if needed):</label>
+    <textarea id="outbox"></textarea>
+    <div class="row">
+      <button class="copy" onclick="copyOut(this)">📋 Copy reply</button>
+      <a class="btn go" href="https://admin.booking.com/" target="_blank" rel="noopener">↗ Go to Booking.com</a>
+      <a class="btn go" href="https://business.google.com/" target="_blank" rel="noopener" style="background:#4285f4">↗ Go to Google</a>
+    </div>
+  </div>
+
+<script>
+// Aspect dictionary: topic -> trigger words
+var ASPECTS = {
+  room:      { words:['room','rooms','cabin','tent','chalet','cottage','suite','accommodation','accom'],
+               neg:['small','cold','dirty','smelly','old','broken','uncomfortable','tiny','cramped','wet','mould','mold','noisy'],
+               pos:['clean','cosy','cozy','comfortable','spacious','lovely','beautiful','nice','warm','charming'] },
+  bathroom:  { words:['bathroom','shower','toilet','loo','restroom'],
+               neg:['dirty','broken','cold','smelly','blocked','no hot','no water','mould','mold'],
+               pos:['clean','hot','great','nice','good'] },
+  bed:       { words:['bed','mattress','sleep','slept','pillow'],
+               neg:['hard','soft','uncomfortable','squeaky','noisy'],
+               pos:['comfy','comfortable','great','good'] },
+  wifi:      { words:['wifi','wi-fi','internet','connection','signal','network'],
+               neg:['slow','down','no','none','weak','terrible','didn\'t work','not work','poor'],
+               pos:['fast','good','great','worked'] },
+  breakfast: { words:['breakfast','food','meal','dinner','braai','bbq','barbecue','eat','eating','coffee','restaurant'],
+               neg:['cold','bad','poor','expensive','little','late','no'],
+               pos:['delicious','great','good','lovely','amazing','tasty','fresh','best'] },
+  staff:     { words:['staff','host','theo','team','owner','reception','manager','people','service'],
+               neg:['rude','unhelpful','slow','ignored','unfriendly','poor'],
+               pos:['friendly','helpful','welcoming','lovely','kind','great','amazing','warm'] },
+  clean:     { words:['clean','cleanliness','tidy','hygiene'],
+               neg:['dirty','filthy','unclean','mess','messy'],
+               pos:['clean','spotless','tidy'] },
+  noise:     { words:['noise','noisy','loud','quiet','peaceful','silent'],
+               neg:['noisy','loud'],
+               pos:['quiet','peaceful','silent','calm'] },
+  location:  { words:['location','wilderness','garden route','area','setting','view','scenery','place','surrounding'],
+               neg:['far','remote','isolated','hard to find','noisy area'],
+               pos:['great','perfect','beautiful','stunning','central','amazing','lovely'] },
+  price:     { words:['price','expensive','cheap','overpriced','value','cost','money','rate'],
+               neg:['expensive','overpriced','costly'],
+               pos:['good value','worth','affordable','reasonable'] },
+  animal:    { words:['chicken','dog','pet','cat','farm','animal','goat','horse'],
+               neg:[],
+               pos:['loved','cute','fun','great'] },
+  power:     { words:['load','shed','loadshedding','loadshed','power','electricity','outage','generator'],
+               neg:['outage','off','down','no power'],
+               pos:['solar','off-grid','off grid','kept us on'] },
+  checkin:   { words:['check in','check-in','arrive','arrival','welcome','greeted'],
+               neg:['late','rude','confusing','no one'],
+               pos:['easy','smooth','warm','friendly','great'] }
+};
+
+function lower(t){ return t.toLowerCase(); }
+
+// Find which aspects are present and their sentiment
+function analyze(text){
+  var t = lower(text);
+  var sentences = text.split(/(?<=[.!?])\s+/).map(function(s){return s.trim();}).filter(Boolean);
+  var found = [];
+  Object.keys(ASPECTS).forEach(function(key){
+    var a = ASPECTS[key];
+    // does any trigger word appear?
+    var hit = a.words.some(function(w){ return t.indexOf(w) >= 0; });
+    if(!hit) return;
+    // determine sentiment: check each sentence that mentions this aspect
+    var sentiment = 'neu';
+    sentences.forEach(function(s){
+      var sl = lower(s);
+      if(a.words.some(function(w){ return sl.indexOf(w) >= 0; })){
+        if(a.neg.some(function(n){ return sl.indexOf(n) >= 0; })) sentiment = 'neg';
+        else if(a.pos.some(function(p){ return sl.indexOf(p) >= 0; })) sentiment = 'pos';
+      }
+    });
+    // global fallback: if no per-sentence signal, scan whole text
+    if(sentiment === 'neu'){
+      if(a.neg.some(function(n){ return t.indexOf(n) >= 0; })) sentiment = 'neg';
+      else if(a.pos.some(function(p){ return t.indexOf(p) >= 0; })) sentiment = 'pos';
+    }
+    found.push({ key:key, sentiment:sentiment });
+  });
+  return found;
+}
+
+function replyFor(key, sentiment){
+  var map = {
+    room:   { neg:'the room wasn\'t up to our usual standard', pos:'you were happy with the room' },
+    bathroom:{ neg:'the bathroom let us down', pos:'the bathroom was good for you' },
+    bed:    { neg:'the bed wasn\'t as comfortable as it should be', pos:'the bed was comfy' },
+    wifi:   { neg:'the wifi let you down', pos:'the wifi worked well for you' },
+    breakfast:{ neg:'the food wasn\'t what you hoped for', pos:'you enjoyed the farm food' },
+    staff:  { neg:'our team didn\'t make you feel as welcome as we should', pos:'the team looked after you' },
+    clean:  { neg:'cleanliness wasn\'t where it should be', pos:'you found it clean' },
+    noise:  { neg:'it was noisier than a Wildfarm stay should be', pos:'you found it peaceful' },
+    location:{ neg:'the location wasn\'t ideal for you', pos:'you loved the Wilderness setting' },
+    price:  { neg:'the value didn\'t feel right', pos:'you felt it was good value' },
+    animal: { neg:'', pos:'the farm animals were a highlight' },
+    power:  { neg:'power was an issue', pos:'our off-grid solar kept you comfortable' },
+    checkin:{ neg:'check-in could have been smoother', pos:'you had a smooth arrival' }
+  };
+  var m = map[key] || { neg:'something wasn\'t right', pos:'you enjoyed your stay' };
+  return sentiment === 'neg' ? m.neg : (sentiment === 'pos' ? m.pos : m.neu);
+}
+
+function generate(){
+  var src = document.getElementById('inbox').value.trim();
+  if(!src){ alert('Paste the review or message first, champ.'); return; }
+  var found = analyze(src);
+  var isQ = (src.indexOf('?') >= 0) || /\b(how|when|where|can we|is there|do you|what time|cost|price|book|available|distance|tour|activity|wifi|breakfast|check|pets|child)\b/i.test(src);
+  var negs = found.filter(function(f){return f.sentiment==='neg';});
+  var poss = found.filter(function(f){return f.sentiment==='pos';});
+
+  var reply = '';
+  if(negs.length > 0){
+    reply = "Hi there, thanks for the honest feedback — we genuinely appreciate you taking the time. ";
+    reply += "Really sorry that ";
+    var bits = negs.map(function(f){ return replyFor(f.key,'neg'); });
+    reply += joinList(bits) + ". ";
+    reply += "That's not the Wildfarm standard we hold ourselves to, and it's on us. ";
+    reply += "We'd love to put it right — please email info@wildfarm.co.za so the Wildfarm crew can make it up to you.";
+    if(poss.length){
+      reply += " On the brighter side, glad " + joinList(poss.map(function(f){return replyFor(f.key,'pos');})) + ".";
+    }
+  } else if(isQ){
+    reply = "Hi! Great question, and thanks for considering a stay with us. ";
+    if(found.length){
+      reply += "Sounds like you're keen on " + joinList(found.map(function(f){return replyFor(f.key,'pos');})) + ". ";
+    }
+    reply += "Happy to help with the details — easiest is to book via Booking.com or email info@wildfarm.co.za and we'll sort you out. 🦁";
+  } else if(poss.length > 0){
+    reply = "Thank you so much for the kind words! 🦁 We're chuffed that ";
+    reply += joinList(poss.map(function(f){return replyFor(f.key,'pos');})) + ". ";
+    reply += "It means the world to the Wildfarm crew. Come braai with us again soon!";
+  } else {
+    reply = "Hi, thanks for your message! The Wildfarm crew would love to help — pop us an email at info@wildfarm.co.za and we'll get right back to you. 🦁";
+  }
+
+  document.getElementById('outbox').value = reply;
+  document.getElementById('resultCard').style.display = 'block';
+  document.getElementById('outbox').focus();
+  document.getElementById('outbox').setSelectionRange(0,0);
+}
+
+function joinList(arr){
+  if(arr.length === 1) return arr[0];
+  if(arr.length === 2) return arr[0] + ' and ' + arr[1];
+  return arr.slice(0,-1).join(', ') + ', and ' + arr[arr.length-1];
+}
+
+function copyOut(btn){
+  var el = document.getElementById('outbox');
+  var t = el.value;
+  function done(){ btn.textContent='✓ Copied!'; btn.style.background='#1aab54';
+    setTimeout(function(){ btn.textContent='📋 Copy reply'; btn.style.background='#0a7cff'; }, 1600); }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(done, fallback);
+  } else { fallback(); }
+  function fallback(){ el.focus(); el.select(); try{ document.execCommand('copy'); }catch(e){} done(); }
+}
+
+document.getElementById('inbox').addEventListener('keydown', function(e){
+  if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); generate(); }
+});
+</script>
+</body>
+</html>
